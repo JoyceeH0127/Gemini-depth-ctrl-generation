@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""
+Example script demonstrating how to use custom prompts with PanoramaGenerator.
+
+This script shows how to:
+1. Load RGB and Depth images
+2. Use a custom prompt to modify the generated panorama
+3. Save the result
+
+Usage:
+    python examples/custom_prompt_example.py \
+        --rgb path/to/rgb_image.png \
+        --depth path/to/depth_image.png \
+        --output outputs/custom_result.png \
+        --prompt "Your custom prompt here"
+"""
+
+import os
+import sys
+import argparse
+import base64
+import io
+from PIL import Image
+
+# Add parent directory to path to import modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from panorama_generator import PanoramaGenerator
+
+
+def create_example_prompt():
+    """Example custom prompt that modifies a specific object in the scene."""
+    return """
+    **Detailed Scene Description:**
+    The scene is an urban street view. Refer strictly to [Image 1] for the specific content.
+
+    **Visual Fidelity Protocol:**
+    1.  **Object Inventory**: Identify all objects.
+    2.  **Strict Preservation**: Preserve most objects.
+    3.  **Modification Override**: Locate the white car parked near the building and change its color to Red.
+    """
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate panorama with custom prompt",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use default example prompt (red car modification)
+  python examples/custom_prompt_example.py --rgb rgb.png --depth depth.png
+
+  # Use custom prompt from file
+  python examples/custom_prompt_example.py --rgb rgb.png --depth depth.png --prompt-file my_prompt.txt
+
+  # Use custom prompt from command line
+  python examples/custom_prompt_example.py --rgb rgb.png --depth depth.png --prompt "Change sky to sunset"
+        """
+    )
+    
+    parser.add_argument(
+        "--rgb",
+        required=True,
+        help="Path to RGB reference image"
+    )
+    parser.add_argument(
+        "--depth",
+        required=True,
+        help="Path to Depth map image"
+    )
+    parser.add_argument(
+        "--output",
+        default="outputs/custom_panorama.png",
+        help="Output path for generated panorama (default: outputs/custom_panorama.png)"
+    )
+    parser.add_argument(
+        "--prompt",
+        help="Custom prompt text (or use --prompt-file or --example-prompt)"
+    )
+    parser.add_argument(
+        "--prompt-file",
+        help="Path to file containing custom prompt"
+    )
+    parser.add_argument(
+        "--example-prompt",
+        action="store_true",
+        help="Use built-in example prompt (red car modification)"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.4,
+        help="Temperature for generation (default: 0.4)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate input files exist
+    if not os.path.exists(args.rgb):
+        print(f"Error: RGB image not found: {args.rgb}")
+        sys.exit(1)
+    
+    if not os.path.exists(args.depth):
+        print(f"Error: Depth image not found: {args.depth}")
+        sys.exit(1)
+    
+    # Determine which prompt to use
+    custom_prompt = None
+    if args.example_prompt:
+        custom_prompt = create_example_prompt()
+        print("Using built-in example prompt (red car modification)")
+    elif args.prompt_file:
+        if not os.path.exists(args.prompt_file):
+            print(f"Error: Prompt file not found: {args.prompt_file}")
+            sys.exit(1)
+        with open(args.prompt_file, 'r', encoding='utf-8') as f:
+            custom_prompt = f.read()
+        print(f"Loaded prompt from: {args.prompt_file}")
+    elif args.prompt:
+        custom_prompt = args.prompt
+        print("Using custom prompt from command line")
+    else:
+        # Default to example prompt if none specified
+        custom_prompt = create_example_prompt()
+        print("No prompt specified, using built-in example prompt (red car modification)")
+    
+    # Initialize generator
+    print("Initializing PanoramaGenerator...")
+    try:
+        generator = PanoramaGenerator()
+    except Exception as e:
+        print(f"Failed to initialize generator: {e}")
+        sys.exit(1)
+    
+    # Load images
+    print(f"Loading RGB image: {args.rgb}")
+    try:
+        rgb_img = Image.open(args.rgb).convert("RGB")
+    except Exception as e:
+        print(f"Error loading RGB image: {e}")
+        sys.exit(1)
+    
+    print(f"Loading Depth image: {args.depth}")
+    try:
+        depth_img = Image.open(args.depth).convert("RGB")
+    except Exception as e:
+        print(f"Error loading Depth image: {e}")
+        sys.exit(1)
+    
+    # Generate panorama
+    print(f"Generating panorama with temperature={args.temperature}...")
+    print(f"Custom prompt preview: {custom_prompt[:100]}...")
+    
+    response = generator.generate_panorama(
+        rgb_img, 
+        depth_img, 
+        temperature=args.temperature, 
+        custom_prompt=custom_prompt
+    )
+    
+    if not response:
+        print("Generation failed (None response).")
+        sys.exit(1)
+    
+    # Extract image from response
+    print("Extracting image from response...")
+    generated_image = None
+    if hasattr(response, 'candidates') and response.candidates:
+        for part in response.candidates[0].content.parts:
+            if part.inline_data:
+                image_data = part.inline_data.data
+                image_bytes = base64.b64decode(image_data) if isinstance(image_data, str) else image_data
+                generated_image = Image.open(io.BytesIO(image_bytes))
+                break
+    
+    if not generated_image:
+        print("Failed to extract image from response.")
+        sys.exit(1)
+    
+    # Save result
+    output_dir = os.path.dirname(args.output) if os.path.dirname(args.output) else "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    generated_image.save(args.output)
+    print(f"✓ Success! Saved panorama to: {args.output}")
+    print(f"  Image size: {generated_image.size[0]}x{generated_image.size[1]}")
+
+
+if __name__ == "__main__":
+    main()
